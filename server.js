@@ -1,35 +1,35 @@
 'use strict';
- 
-var express = require('express');
-var bodyParser = require('body-parser');
- 
-var app = express();
-app.use(bodyParser.json());
- 
-const { Gateway, Wallets } = require('fabric-network');
-const path = require('path');
-const fs = require('fs');
 
+import express from 'express';
+import bodyParser from 'body-parser';
 import fileUpload from 'express-fileupload';
 import { createHelia } from 'helia';
-import { strings } from '@helia/strings'
+import { strings } from '@helia/strings';
+import { CID } from 'multiformats/cid';
+import { Gateway, Wallets } from 'fabric-network';
+import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { CID } from 'multiformats/cid'
 
-// Get __dirname equivalent
+// Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const temp = await createHelia({ host: 'localhost', port: 5001, protocol: 'http' });
-const ipfs = strings(temp)
-
-// Middleware to handle file uploads
+// Initializing the express app
+const app = express();
+app.use(bodyParser.json());
 app.use(fileUpload());
-app.use(express.json());
+
+// Asynchronous initialization of Helia
+let ipfs;
+(async () => {
+    const helia = await createHelia({ host: 'localhost', port: 5001, protocol: 'http' });
+    ipfs = strings(helia);
+})();
 
 // load the network configuration
-const ccpPath = path.resolve(__dirname, '..', 'fabric-samples','test-network', 'organizations', 'peerOrganizations', 'org1.example.com', 'connection-org1.json');
+const ccpPath = path.resolve(__dirname, '..', 'blockchain-test-network', 'fabric-samples','test-network', 'organizations', 'peerOrganizations', 'org1.example.com', 'connection-org1.json');
 const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
 
 async function storeDocument(documentBuffer) {
@@ -75,14 +75,16 @@ async function getContract(gateway) {
     return network.getContract('OssV1');
 }
 
+// Create Doc
 app.post('/api/createdoc/', async function (req, res) { 
     let gateway;
+    console.log('Request Body:', req.body);
     console.log('Files received:', req.files);
     if (!req.files || Object.keys(req.files).length === 0) {
         return res.status(400).send('No files were uploaded.');
     }
     try {
-        const documentBuffer = req.files.file.name;  // Access the file using the correct key
+        const documentBuffer = req.files.file.data;  // Access the file using the correct key
         const ipfshash = await storeDocument(documentBuffer);
 	    console.log(ipfshash)
 
@@ -91,12 +93,11 @@ app.post('/api/createdoc/', async function (req, res) {
 
         // docHash is ipfsHash
         // Creating a new document - requires 6 argument, ex: ("CreateDoc", "user123", "doc456","Example Document","pdf","2023-07-06T12:34:56Z", "QmTzQ1N4aVx7Mh3Uq7P8L2V9Rz1Q4uQ8Wz1F1R2P3S4T5")
-        await contract.submitTransaction('CreateDoc', req.body.userid, req.body.docid, req.body.docname, req.body.doctype, req.body.timestamp, req.body.ipfshash);
+        await contract.submitTransaction('CreateDoc', req.body.userid, req.body.docid, req.body.docname, req.body.doctype, req.body.timestamp, ipfshash);
         
         // send the res just once -- TBD
-        res.send({ docId: req.body.docId, ipfshash}); //doubt about this
+        res.status(201).send({ msg: 'Transaction has been submitted', docId: req.body.docid, ipfshash}); 
         console.log('Transaction has been submitted');
-        res.send('Transaction has been submitted');
     } catch (error) {
         console.error(`Failed to submit transaction: ${error}`);
         res.status(500).send(`Failed to submit transaction: ${error}`);
@@ -108,7 +109,7 @@ app.post('/api/createdoc/', async function (req, res) {
     }        
 });
 
-// Make it by docId?
+// Query by user ID
 app.get('/api/querydocbyuserid/:userId', async function (req, res) {
     let gateway;
     try {
@@ -116,15 +117,19 @@ app.get('/api/querydocbyuserid/:userId', async function (req, res) {
         const contract = await getContract(gateway);
     
         // QueryDocByUserId transaction - requires one argument ex: ('QueryDocByUserId', '1')
-        const result = await contract.evaluateTransaction('QueryDocByUserId',req.params.userId);
+        const result = await contract.evaluateTransaction('QueryDocByUserId', req.params.userId);
+        const docs = JSON.parse(result.toString());
+ 
+        const docWithHash = docs.find(doc => doc.ipfshash);
+        if (!docWithHash) {
+            return res.status(404).send('No documents found with an IPFS hash.');
+        }
 
-        const ipfshash = JSON.parse(result.toString()).ipfshash;
-        const document = await getDocument(ipfshash);
-
-        res.send({ docId: req.params.docId, document });
+        const document = await getDocument(docWithHash.ipfshash);
+        res.status(200).send({ docId: docWithHash.docid, document });
 
         console.log(`Transaction has been evaluated, result is: ${result.toString()}`);
-        res.status(200).json({response: result.toString()});
+        
     } catch (error) {
         console.error(`Failed to submit transaction: ${error}`);
         res.status(500).send(`Failed to submit transaction: ${error}`);
@@ -136,24 +141,70 @@ app.get('/api/querydocbyuserid/:userId', async function (req, res) {
     }
 });
 
-app.get('/api/queryalldocs', async function (req, res) {
+// Query by doc ID
+app.get('/api/querydocbydocid/:userId/:docId', async function (req, res) {
     let gateway;
     try {
         gateway = await connectToGateway();
         const contract = await getContract(gateway);
 
-        // QueryAllDocs transaction - requires no arguments
-        const result = await contract.evaluateTransaction('QueryAllDocs');
-        console.log(`Transaction has been evaluated, result is: ${result.toString()}`);
-        res.status(200).json({response: result.toString()});
+        // QueryDocByDocId transaction - requires two arguments
+        const result = await contract.evaluateTransaction('QueryDocByDocId', req.params.userId, req.params.docId);
+        const doc = JSON.parse(result.toString());
+
+        res.status(200).json({response: doc});
     } catch (error) {
-        console.error(`Failed to evaluate transaction: ${error}`);
-        res.status(500).send(`Failed to evaluate transaction: ${error}`);
+        console.error(`Failed to submit transaction: ${error}`);
+        res.status(500).send(`Failed to submit transaction: ${error}`);
     } finally {
         if (gateway) {
             // Disconnect from the gateway.
             gateway.disconnect();
         }
+    }
+});
+
+
+// Query by doc name
+app.get('/api/querydocbyname/:docName', async function (req, res) {
+    let gateway;
+    try {
+        gateway = await connectToGateway();
+        const contract = await getContract(gateway);
+
+        // QueryDocByName transaction - requires one argument
+        const result = await contract.evaluateTransaction('QueryDocByName', req.params.docName);
+        const docs = JSON.parse(result.toString());
+
+        res.status(200).json({response: docs});
+    } catch (error) {
+        console.error(`Failed to submit transaction: ${error}`);
+        res.status(500).send(`Failed to submit transaction: ${error}`);
+    } finally {
+        if (gateway) {
+            // Disconnect from the gateway.
+            gateway.disconnect();
+        }
+    }
+});
+
+// Download file from IPFS using CID
+app.get('/api/download/:cid', async function (req, res) {
+    const cid = req.params.cid;
+
+    try {
+        const file = await getDocument(cid);
+        if (file && file.length > 0) {
+            res.setHeader('Content-Disposition', `attachment; filename="${cid}.pdf"`);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Length', file.length);
+            res.send(file);
+        } else {
+            res.status(404).send('File not found on IPFS or file is empty');
+        }
+    } catch (error) {
+        console.error(`Error fetching document from IPFS: ${error}`);
+        res.status(500).send(`Error fetching document from IPFS: ${error.message}`);
     }
 });
 

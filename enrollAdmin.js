@@ -1,13 +1,20 @@
 'use strict';
-const FabricCAServices = require('fabric-ca-client');
-const { Wallets } = require('fabric-network');
-const fs = require('fs');
-const path = require('path');
+import FabricCAServices from 'fabric-ca-client';
+import { Wallets } from 'fabric-network';
+import fs from 'fs';
+import path from 'path';
+
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
  
 async function main() {
     try {
         // load the network configuration
-        const ccpPath = path.resolve(__dirname, '..','fabric-samples', 'test-network', 'organizations', 'peerOrganizations', 'org1.example.com', 'connection-org1.json');
+        const ccpPath = path.resolve(__dirname, '..', 'blockchain-test-network','fabric-samples', 'test-network', 'organizations', 'peerOrganizations', 'org1.example.com', 'connection-org1.json');
         const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
  
         // Create a new CA client for interacting with the CA.
