@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 
 const DocMetadaSchema = mongoose.Schema(
   {
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
     docId: {
       type: String,
       required: true,
@@ -11,8 +17,6 @@ const DocMetadaSchema = mongoose.Schema(
       type: String,
       required: true,
     },
-
-    // ini masih perlu?
 
     docType: {
       type: String,
